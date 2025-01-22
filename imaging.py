@@ -19,6 +19,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.feature_extraction.text import TfidfVectorizer
 from datetime import datetime
 import pathlib
+from matplotlib.lines import Line2D
 
 # Load environment variables from .env file
 load_dotenv()
@@ -63,9 +64,9 @@ question_categories = {
         "If you invest $1000 at a 5% annual interest rate compounded annually, how much money will you have after 3 years?",
         "What is 17 times 23?",
         "Solve for x: 2x + 5 = 11",
-        "Calculate the derivative of f(x) = 3x² + 2x - 5 at x = 4.",  
+        "Calculate the derivative of f(x) = 3x^2 + 2x - 5 at x = 4.",  
         "If a right triangle has legs of 7cm and 24cm, what is the length of the hypotenuse?",  
-        "Simplify the expression: (3⁴ × 2⁻²) ÷ (9² × 4⁻¹)." 
+        "Simplify the expression: (3^4 times 2^-2) ÷ (9^2 times 4^-1)." 
     ],
     "Language": [
         "Write a short story (around 50 words) about a robot who discovers a flower.",
@@ -333,44 +334,108 @@ def setup_results_directory():
     run_dir = results_dir / timestamp
     run_dir.mkdir(exist_ok=True)
     
+    # Copy previous responses if they exist
+    previous_results = load_last_run_results()
+    if previous_results:
+        with open(run_dir / "responses_intermediate.json", "w") as f:
+            json.dump(previous_results, f, indent=4)
+    
     return run_dir, timestamp
+
+def get_abbreviated_category(category):
+    abbreviations = {
+        "Temporal Processing": "TP",
+        "Spatial Navigation": "SN",
+        "Working Memory": "WM",
+        "Executive Function": "EF",
+        "Pattern Recognition": "PR",
+        "Spatial Reasoning": "SR",
+        "Social Intelligence": "SI",
+        "Creative Writing": "CW",
+        "Decision Making": "DM",
+        "Motor Planning": "MP",
+        "Logical Reasoning": "LR",
+        "Language": "LG",
+        "Emotion": "EM",
+        "Vision": "VS",
+        "Math": "MT"
+    }
+    return abbreviations.get(category, category)
 
 # --- Save results and visualizations ---
 def save_results(results, embedding, clusters, categories, run_dir, timestamp):
-    # Save raw responses
-    with open(run_dir / "responses.json", "w") as f:
-        json.dump(results, f, indent=4)
+    plt.figure(figsize=(15, 12))  # Made taller to accommodate bottom legend
     
-    # Save analysis results
+    # Get unique categories and assign numbers
+    unique_categories = sorted(set(categories))
+    category_numbers = {cat: i+1 for i, cat in enumerate(unique_categories)}
+    
+    # Define a colormap with distinct, clear colors
+    n_clusters = len(set(clusters)) - (1 if -1 in clusters else 0)
+    colors = plt.cm.tab20(np.linspace(0, 1, n_clusters))
+    
+    # Create scatter plot with larger points
+    scatter = plt.scatter(embedding[:, 0], embedding[:, 1], 
+                         c=clusters, cmap='tab20',
+                         alpha=0.8, s=200)
+    
+    # Add numbers in the middle of each point
+    for i, (cat, emb) in enumerate(zip(categories, embedding)):
+        plt.annotate(str(category_numbers[cat]), 
+                    (emb[0], emb[1]),
+                    ha='center', va='center',
+                    color='black', fontweight='bold',
+                    fontsize=8)
+    
+    # Create legend with numbered categories
+    legend_elements = [Line2D([0], [0], marker='o', color='w', 
+                            markerfacecolor='gray', markersize=10,
+                            label=f'{num}: {cat}')
+                      for cat, num in category_numbers.items()]
+    
+    # Add legend below the plot
+    plt.legend(handles=legend_elements, 
+              loc='center', 
+              title='Categories',
+              bbox_to_anchor=(0.5, -0.15),
+              ncol=3,  # Arrange in 3 columns
+              fontsize=10,
+              title_fontsize=12)
+    
+    plt.title(f"LLM Response Map: {timestamp}\nDimensionality Reduction of Response Patterns", 
+              fontsize=14, pad=20)
+    plt.xlabel("UMAP Dimension 1\n(Primary Pattern Variation)", fontsize=12)
+    plt.ylabel("UMAP Dimension 2\n(Secondary Pattern Variation)", fontsize=12)
+    
+    # Add colorbar for clusters
+    cbar = plt.colorbar(scatter, label="Cluster")
+    cbar.set_label("Response Clusters", fontsize=12)
+    
+    plt.grid(True, alpha=0.3)
+    
+    # Adjust layout to prevent legend cutoff
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.2)  # Make room for legend at bottom
+    
+    plt.savefig(run_dir / "response_map.png", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Save numerical results
     analysis_results = {
         'timestamp': timestamp,
         'embedding': embedding.tolist(),
         'clusters': clusters.tolist(),
-        'categories': categories
+        'categories': categories,
+        'metadata': {
+            'n_samples': len(categories),
+            'n_clusters': len(set(clusters)) - (1 if -1 in clusters else 0),
+            'dimensions': embedding.shape[1],
+            'categories_summary': {cat: categories.count(cat) for cat in set(categories)}
+        }
     }
+    
     with open(run_dir / "analysis_results.json", "w") as f:
         json.dump(analysis_results, f, indent=4)
-    
-    # Create and save visualization
-    plt.figure(figsize=(12, 8))
-    
-    scatter = plt.scatter(embedding[:, 0], embedding[:, 1], 
-                         c=clusters, cmap='Spectral',
-                         alpha=0.6, s=100)
-    
-    for i, category in enumerate(categories):
-        plt.annotate(category, (embedding[i, 0], embedding[i, 1]),
-                    xytext=(5, 5), textcoords='offset points',
-                    fontsize=8, alpha=0.7)
-    
-    plt.title(f"LLM Response Map: {timestamp}")
-    plt.xlabel("UMAP Dimension 1")
-    plt.ylabel("UMAP Dimension 2")
-    plt.colorbar(scatter, label="Cluster")
-    
-    plt.tight_layout()
-    plt.savefig(run_dir / "response_map.png", dpi=300, bbox_inches='tight')
-    plt.close()
 
 def process_responses_to_features(results):
     # Extract all responses into a flat list
@@ -404,12 +469,12 @@ def load_last_run_results():
         return None
     
     # Get the most recent directory that has a complete responses.json
-    valid_run_dirs = [d for d in run_dirs if (d / "responses.json").exists()]
+    valid_run_dirs = [d for d in run_dirs if (d / "responses_intermediate.json").exists()]
     if not valid_run_dirs:
         return None
     
     last_run_dir = max(valid_run_dirs)
-    response_file = last_run_dir / "responses.json"
+    response_file = last_run_dir / "responses_intermediate.json"
     
     try:
         with open(response_file, 'r') as f:
@@ -429,25 +494,20 @@ def main():
     previous_results = load_last_run_results()
     print(f"Found {len(previous_results) if previous_results else 0} categories in previous results")
     
-    # Initialize results dictionary
-    results = {}
+    # Initialize results dictionary with previous results if they exist
+    results = previous_results.copy() if previous_results else {}
     
     # Collect responses with incremental saving
     for category, questions in question_categories.items():
-        results[category] = {}
-        for question in questions:
-            # More robust check for cached responses
-            cached_response = None
-            if (previous_results and 
-                isinstance(previous_results, dict) and
-                category in previous_results and
-                question in previous_results[category] and
-                previous_results[category][question] is not None):
-                cached_response = previous_results[category][question]
+        if category not in results:
+            results[category] = {}
             
-            if cached_response:
+        for question in questions:
+            # Skip if we already have a valid response
+            if (category in results and 
+                question in results[category] and 
+                results[category][question] is not None):
                 print(f"Using cached response for ({category}): {question}")
-                results[category][question] = cached_response
                 continue
                 
             print(f"Question ({category}): {question}")
